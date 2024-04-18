@@ -43,15 +43,11 @@ impl<'a> Parser<'a> {
     fn parse_fn_def(&mut self) -> Stmt {
         self.expect_keyword(Keyword::Fn);
         let ident = self.parse_ident();
-        self.expect_separator(Separator::LParen);
         let mut params = Vec::new();
-        while !self.is_separator(Separator::RParen) {
+        while !self.is_separator(Separator::Semicolon) {
             params.push(self.parse_ident());
-            if !self.is_separator(Separator::RParen) {
-                self.expect_separator(Separator::Comma);
-            }
         }
-        self.expect_separator(Separator::RParen);
+        self.expect_separator(Separator::Semicolon);
         let body = self.parse_expr();
         Stmt::FnDef(ident, params, Box::new(body))
     }
@@ -68,127 +64,49 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_expr(&mut self) -> Expr {
-        self.parse_equality()
-    }
-
-    fn parse_equality(&mut self) -> Expr {
-        let mut expr = self.parse_comparison();
-        while self.is_operator(Operator::Eq) || self.is_operator(Operator::Ne) {
-            let op = self.parse_operator();
-            let right = self.parse_comparison();
-            expr = Expr::BinaryOp(Box::new(expr), op, Box::new(right));
-        }
-        expr
-    }
-
-    fn parse_comparison(&mut self) -> Expr {
-        let mut expr = self.parse_term();
-        while self.is_operator(Operator::Lt)
-            || self.is_operator(Operator::Le)
-            || self.is_operator(Operator::Gt)
-            || self.is_operator(Operator::Ge)
-        {
-            let op = self.parse_operator();
-            let right = self.parse_term();
-            expr = Expr::BinaryOp(Box::new(expr), op, Box::new(right));
-        }
-        expr
-    }
-
-    fn parse_term(&mut self) -> Expr {
-        let mut expr = self.parse_factor();
-        while self.is_operator(Operator::Add) || self.is_operator(Operator::Sub) {
-            let op = self.parse_operator();
-            let right = self.parse_factor();
-            expr = Expr::BinaryOp(Box::new(expr), op, Box::new(right));
-        }
-        expr
-    }
-
-    fn parse_factor(&mut self) -> Expr {
-        let mut expr = self.parse_unary();
-        while self.is_operator(Operator::Mul) || self.is_operator(Operator::Div) {
-            let op = self.parse_operator();
-            let right = self.parse_unary();
-            expr = Expr::BinaryOp(Box::new(expr), op, Box::new(right));
-        }
-        expr
-    }
-
-    fn parse_unary(&mut self) -> Expr {
-        if self.is_operator(Operator::Sub) || self.is_operator(Operator::Not) {
-            let op = self.parse_operator();
-            let expr = self.parse_unary();
-            Expr::UnaryOp(op, Box::new(expr))
-        } else {
-            self.parse_primary()
-        }
-    }
-
-    fn parse_primary(&mut self) -> Expr {
-        match &self.current_token {
-            Token::Number(value) => {
-                let expr = Expr::Number(*value);
-                self.advance();
-                expr
-            }
-            Token::Boolean(value) => {
-                let expr = Expr::Boolean(*value);
-                self.advance();
-                expr
-            }
-            Token::Ident(ident) => {
-                let expr = if self.is_separator(Separator::LParen) {
-                    self.parse_fn_call(ident.clone())
-                } else {
-                    Expr::Ident(ident.clone())
-                };
-                self.advance();
-                expr
-            }
-            Token::Separator(Separator::LParen) => {
-                self.advance();
-                let expr = self.parse_expr();
-                self.expect_separator(Separator::RParen);
-                expr
-            }
-            Token::Keyword(Keyword::If) => self.parse_if_expr(),
-            Token::Keyword(Keyword::While) => self.parse_while_expr(),
-            _ => panic!("Unexpected token: {:?}", self.current_token),
-        }
-    }
-
-    fn parse_fn_call(&mut self, ident: String) -> Expr {
-        self.expect_separator(Separator::LParen);
-        let mut args = Vec::new();
-        while !self.is_separator(Separator::RParen) {
-            args.push(self.parse_expr());
-            if !self.is_separator(Separator::RParen) {
-                self.expect_separator(Separator::Comma);
+        let mut stack = Vec::new();
+        while !self.is_end() && !self.is_separator(Separator::Semicolon) {
+            match &self.current_token {
+                Token::Number(value) => {
+                    stack.push(Expr::Number(*value));
+                    self.advance();
+                }
+                Token::Boolean(value) => {
+                    stack.push(Expr::Boolean(*value));
+                    self.advance();
+                }
+                Token::Ident(ident) => {
+                    stack.push(Expr::Ident(ident.clone()));
+                    self.advance();
+                }
+                Token::Operator(operator) => {
+                    let op = self.parse_operator();
+                    let right = stack.pop().unwrap();
+                    let left = stack.pop().unwrap();
+                    stack.push(Expr::BinaryOp(Box::new(left), op, Box::new(right)));
+                }
+                Token::Keyword(Keyword::If) => {
+                    self.advance();
+                    let cond = stack.pop().unwrap();
+                    let then_branch = stack.pop().unwrap();
+                    let else_branch = stack.pop().unwrap();
+                    stack.push(Expr::If(
+                        Box::new(cond),
+                        Box::new(then_branch),
+                        Box::new(else_branch),
+                    ));
+                }
+                Token::Keyword(Keyword::While) => {
+                    self.advance();
+                    let cond = stack.pop().unwrap();
+                    let body = stack.pop().unwrap();
+                    stack.push(Expr::While(Box::new(cond), Box::new(body)));
+                }
+                _ => panic!("Unexpected token: {:?}", self.current_token),
             }
         }
-        self.expect_separator(Separator::RParen);
-        Expr::FnCall(ident, args)
-    }
-
-    fn parse_if_expr(&mut self) -> Expr {
-        self.expect_keyword(Keyword::If);
-        let cond = self.parse_expr();
-        let then_branch = self.parse_expr();
-        let else_branch = if self.is_keyword(Keyword::Else) {
-            self.advance();
-            self.parse_expr()
-        } else {
-            Expr::Boolean(false)
-        };
-        Expr::If(Box::new(cond), Box::new(then_branch), Box::new(else_branch))
-    }
-
-    fn parse_while_expr(&mut self) -> Expr {
-        self.expect_keyword(Keyword::While);
-        let cond = self.parse_expr();
-        let body = self.parse_expr();
-        Expr::While(Box::new(cond), Box::new(body))
+        assert_eq!(stack.len(), 1);
+        stack.pop().unwrap()
     }
 
     fn parse_ident(&mut self) -> String {
