@@ -1,17 +1,19 @@
 use crate::ast::*;
 use crate::lexer::{Lexer, Token};
+use std::borrow::BorrowMut;
+use std::cell::RefCell;
 
 pub struct Parser<'a> {
-    lexer: Lexer<'a>,
-    current_token: Token,
+    lexer: RefCell<Lexer<'a>>,
+    current_token: RefCell<Token>,
 }
 
 impl<'a> Parser<'a> {
     pub fn new(lexer: Lexer<'a>) -> Self {
         let current_token = lexer.next_token();
         Parser {
-            lexer,
-            current_token,
+            lexer: RefCell::new(lexer),
+            current_token: RefCell::new(current_token),
         }
     }
 
@@ -166,8 +168,8 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn advance(&mut self) {
-        self.current_token = self.lexer.next_token();
+    fn advance(&self) {
+        *self.current_token.borrow_mut() = self.lexer.borrow_mut().next_token();
     }
 
     fn is_end(&self) -> bool {
